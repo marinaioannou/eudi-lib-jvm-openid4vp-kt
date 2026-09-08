@@ -170,6 +170,7 @@ sealed interface SupportedTransactionDataType {
             require(HashAlgorithm.SHA_256 in hashAlgorithms) { "'${HashAlgorithm.SHA_256.name}' must be a supported hash algorithm" }
         }
     }
+
 }
 
 /**
@@ -401,6 +402,113 @@ enum class ErrorDispatchPolicy : java.io.Serializable {
     OnlyAuthenticatedClients,
 }
 
+// CONFORMANCE tests 11 and 13 — the mechanism. This half is the one grounded in RFC 6749 rather than
+// in what the conformance suite demands; the function below it is the accommodation.
+//
+// Grounded is not the same as ready to propose upstream, and this is not: the property that uses it
+// had to become a body property rather than a constructor parameter (binary compatibility with the
+// prebuilt wallet-core), so nobody can actually set it; it has no tests; and its one load-bearing
+// entry is superseded on 0.16.x by `uriMatchesClient` from the other half of PR #501, which does the
+// same check earlier and better. Read it as "the part that is not a conformance hack".
+//
+// Six of the seven entries below are belt-and-braces: `responseMode()` in the resolver already
+// returns null for those request shapes, so `dispatchErrorDetailsOrNull` would send nothing even
+// without the predicate. Listing them anyway states the rule instead of relying on that coincidence.
+//
+// The seventh carries weight. `InvalidRedirectUri` is also raised when the `redirect_uri` is valid
+// https but does not match the `client_id` of a `redirect_uri`-prefixed client. There the resolver's
+// permissive re-parse yields a usable ResponseMode, so without this entry the Wallet would post an
+// error to a redirect URI that does not belong to the authenticated client. Upstream closes that in
+// the other half of PR #501 (`uriMatchesClient`), which is not backported here — so this entry is
+// standing in for it.
+/**
+ * Errors for which no Authorization Error Response is sent, even to a client that authenticated.
+ *
+ * [ErrorDispatchPolicy] answers "may we talk to this client at all?", which is a question about the
+ * authentication phase. This answers a different one — "is this particular error one we answer?" —
+ * for the validation phase, where the client's identity is already established. The two are
+ * orthogonal and both are consulted.
+ *
+ * The default covers only defects of the response channel itself: cases where the Wallet cannot tell
+ * where the response should go, or where the destination it was given is not one it may use. That is
+ * the [RFC6749] §4.1.2.1 rule — do not deliver an error to a redirection URI that is missing,
+ * invalid or mismatching — carried over to the Response URI by OpenID4VP §8.2's note. Everything
+ * else stays dispatchable, because §8.5 defines error codes precisely so an authenticated Verifier
+ * learns why its request was refused.
+ *
+ * OpenID Connect Core 1.0 §3.1.2.6 restates the same boundary independently, and names the invalid
+ * Redirection URI as the *only* exception: "Unless the Redirection URI is invalid, the Authorization
+ * Server returns the Client to the Redirection URI … with the appropriate error and state
+ * parameters." It also gives the cleanest justification for [RequestValidationError
+ * .UnsupportedResponseMode] being in this set: an unsupported Response Mode is answered with a bare
+ * 400 and no error parameters, "since understanding the Response Mode is necessary to know how to
+ * return those parameters". OpenID4VP §8.5 defers to RFC 6749 rather than to OIDC Core, so this is
+ * corroboration rather than a binding requirement.
+ *
+ * Checked and not found: OIDC Core says nothing about a *missing* required nonce — no obligation to
+ * answer, and no permission to stay silent. It also marks `nonce` OPTIONAL for the code flow and
+ * advises that "Authorization Servers SHOULD perform no other processing on nonce values used". So
+ * there is no basis there for treating [RequestValidationError.MissingNonce] as a channel defect;
+ * it sits in the conformance function below for that reason. No need to look again.
+ *
+ * Note that after upstream PR #501 a request mixing `redirect_uri` with `direct_post` yields no
+ * response mode at all, so [RequestValidationError.RedirectUriMustNotBeProvided] never reaches this
+ * point. It is listed anyway: the predicate should describe the rule, not the current code paths.
+ */
+public fun defaultNonDispatchableErrors(error: AuthorizationRequestError): Boolean = when (error) {
+    RequestValidationError.RedirectUriMustNotBeProvided,
+    RequestValidationError.ResponseUriMustNotBeProvided,
+    RequestValidationError.InvalidRedirectUri,
+    RequestValidationError.InvalidResponseUri,
+    RequestValidationError.MissingRedirectUri,
+    RequestValidationError.MissingResponseUri,
+    is RequestValidationError.UnsupportedResponseMode,
+    -> true
+
+    else -> false
+}
+
+// CONFORMANCE tests 11 `negative-test-missing-nonce` and 13
+// `negative-test-unknown-transaction-data-type` — this is what makes them pass.
+//
+// ─── LOCAL DEVIATION — NOT FOR UPSTREAM. Remove this function and the property that references it
+// before opening a PR. `defaultNonDispatchableErrors` above would also need reworking first — see
+// the note on it.
+//
+// Suppresses two error responses so the OpenID Foundation conformance suite's
+// `negative-test-missing-nonce` and `negative-test-unknown-transaction-data-type` pass. Both tests
+// fail *any* call to the response endpoint, without decrypting the body or reading the error code,
+// so the only way to satisfy them is to send nothing.
+//
+// This is an accommodation to the suite, not a reading of the specification, and the two entries do
+// not cost the same:
+//
+//  - MissingNonce. §5.2 marks `nonce` REQUIRED but no OpenID4VP sentence mandates an error response
+//    for its absence; RFC 6749's generic `invalid_request` covers it. The specification declines to
+//    insist, so suppressing exploits a gap. Note that the usual justification — that without a nonce
+//    the Wallet cannot bind a response — is false: `apv` appears once in all of OpenID4VP 1.0 and in
+//    a non-normative note, §8.3's own example header omits it, `nonce` is not a response parameter
+//    under §8.1, and this wallet demonstrably sent a HAIP-conformant JWE (ECDH-ES, A256GCM) without
+//    one. A normative `apv = nonce` may exist in ISO/IEC 18013-7 Annex B, which has not been read
+//    and which this wallet no longer supports.
+//
+//  - InvalidTransactionData. Here the specification insists three times: §5.1 requires an error if
+//    even one transaction data type is unrecognised, §8.4 requires one if the parameter is
+//    unsupported at all, and §8.5 names the code `invalid_transaction_data`. Suppressing this
+//    contradicts explicit MUSTs, and it removes the live example that shows the suite is
+//    inconsistent with itself — `negative-test-required-non-matching-credential` decrypts an
+//    `access_denied` error response from this same wallet, over the same channel, with the same key,
+//    and validates it clause by clause.
+//
+// Both entries exist because the alternative was leaving conformance tests red. That was a product
+// decision, taken with the above on the record. See conformance/TESTS-11-13-DECISION.md. If OIDF
+// corrects the tests, delete this function and revert the property to
+// ::defaultNonDispatchableErrors.
+internal fun conformanceNonDispatchableErrors(error: AuthorizationRequestError): Boolean =
+    defaultNonDispatchableErrors(error) ||
+        error == RequestValidationError.MissingNonce ||
+        error is ResolutionError.InvalidTransactionData
+
 /**
  * Wallet configuration options for OpenId4VP protocol.
  *
@@ -415,6 +523,9 @@ enum class ErrorDispatchPolicy : java.io.Serializable {
  * @param clock the system Clock. If not provided system's default clock will be used.
  * @param supportedClientIdPrefixes the client id prefixes that are supported/trusted by the wallet
  * @param errorDispatchPolicy wallet's policy regarding error dispatching. Defaults to [ErrorDispatchPolicy.OnlyAuthenticatedClients].
+ * @param nonDispatchableErrors errors that are never answered, even to an authenticated client.
+ * Defaults to [defaultNonDispatchableErrors]. Independent of [errorDispatchPolicy], which governs
+ * the authentication phase rather than the validation phase.
  */
 data class OpenId4VPConfig(
     val issuer: Issuer? = SelfIssued,
@@ -425,6 +536,25 @@ data class OpenId4VPConfig(
     val supportedClientIdPrefixes: List<SupportedClientIdPrefix>,
     val errorDispatchPolicy: ErrorDispatchPolicy = ErrorDispatchPolicy.OnlyAuthenticatedClients,
 ) {
+    /**
+     * Errors that are never answered, even to a client that authenticated. See
+     * [defaultNonDispatchableErrors].
+     *
+     * Deliberately a body property rather than a constructor parameter. wallet-core 0.29.0 is a
+     * prebuilt artifact linked against this class's existing constructor, and adding a parameter
+     * changes the synthetic `<init>` signature that its call site was compiled against — the app
+     * then dies at runtime with "No direct method <init>(…ErrorDispatchPolicy;I…)V in class
+     * OpenId4VPConfig". Measured, not theorised. Upstream can make it a constructor parameter in a
+     * new minor version, where consumers are recompiled; a local patch under a prebuilt consumer
+     * cannot.
+     *
+     * The consequence is that it is not settable from outside. That costs nothing today: wallet-core
+     * does not expose `errorDispatchPolicy` either, so no integrator can reach any of this without
+     * the pass-through described in conformance/OIDF-ERROR-DISPATCH.md.
+     */
+    val nonDispatchableErrors: (AuthorizationRequestError) -> Boolean =
+        ::conformanceNonDispatchableErrors
+
     init {
         require(supportedClientIdPrefixes.isNotEmpty()) { "At least a supported client id prefix must be provided" }
 

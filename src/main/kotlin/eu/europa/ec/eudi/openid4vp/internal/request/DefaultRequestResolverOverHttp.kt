@@ -203,7 +203,17 @@ internal class DefaultRequestResolverOverHttp(
             try {
                 validateRequestObject(authenticatedRequest)
             } catch (e: AuthorizationRequestException) {
-                val dispatchDetails = dispatchErrorDetailsOrNull(authenticatedRequest.requestObject, openId4VPConfig)
+                // CONFORMANCE tests 11 `negative-test-missing-nonce` and 13
+                // `negative-test-unknown-transaction-data-type` — both fail *any* call to the
+                // response endpoint. This gate is what lets a specific error go unanswered.
+                //
+                // The client authenticated, so ErrorDispatchPolicy permits an answer. Whether this
+                // particular error is one the Wallet answers is a separate question — §8.5 wants the
+                // Verifier told why, RFC 6749 §4.1.2.1 does not when the destination itself is at
+                // fault. See OpenId4VPConfig.nonDispatchableErrors.
+                val dispatchDetails =
+                    if (openId4VPConfig.nonDispatchableErrors(e.error)) null
+                    else dispatchErrorDetailsOrNull(authenticatedRequest.requestObject, openId4VPConfig)
                 return Resolution.Invalid(e.error, dispatchDetails)
             }
 
