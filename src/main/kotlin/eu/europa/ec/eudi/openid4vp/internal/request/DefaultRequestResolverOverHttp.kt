@@ -285,24 +285,56 @@ private fun UnvalidatedRequestObject.responseEncryptionSpecification(
     }
 }
 
+// CONFORMANCE test 10 `negative-test-redirect-uri-with-direct-post` — "the wallet should have
+// rejected the request due to redirect_uri being present with direct_post". Fixed the way upstream
+// fixed it: such a request yields no response destination, so there is nothing to answer to.
+//
+// Backported from upstream PR #501 (commit 58b2cb6, released in v0.16.0), the `responseMode()` half.
+// Two changes, both from that commit verbatim:
+//
+//  - `response_uri` and `redirect_uri` are mutually exclusive per §8.2, so a request carrying both
+//    has no determinable response destination and this returns null. `dispatchErrorDetailsOrNull`
+//    then yields null and no Authorization Error Response is sent. This is how upstream resolved the
+//    tension in §8.2 between "MUST return an invalid_request error" and RFC 6749 §4.1.2.1's "MUST
+//    NOT redirect to an invalid redirection URI" — toward RFC 6749, when the destination itself is
+//    what is in doubt.
+//  - the URI parsers become the https-validating ones the library already has in UriSupport.kt,
+//    instead of bare URL()/URI.create().
+//
+// PR #501 also passes the AuthenticatedClient down and checks the response URI against it
+// (`uriMatchesClient`). That half is not backported: it is independent hardening, and for
+// `x509_hash` — the prefix this plan uses — it returns true unconditionally, so it would change
+// nothing here. Revisit it when upgrading to 0.16.x.
 private fun UnvalidatedRequestObject.responseMode(): ResponseMode? {
-    fun UnvalidatedRequestObject.responseUri(): URL? =
-        responseUri?.let {
-            runCatchingCancellable { URL(it) }.getOrNull()
-        }
+    fun responseUri(): URL? = responseUri?.asHttpsURL()?.getOrNull()
 
-    fun UnvalidatedRequestObject.redirectUri(): URI? =
-        redirectUri?.let {
-            runCatchingCancellable { URI.create(it) }.getOrNull()
-        }
+    fun redirectUri(): URI? = redirectUri?.asHttpsURI()?.getOrNull()
 
     return when (responseMode) {
-        "direct_post" -> responseUri()?.let { ResponseMode.DirectPost(it) }
-        "direct_post.jwt" -> responseUri()?.let { ResponseMode.DirectPostJwt(it) }
-        "query" -> redirectUri()?.let { ResponseMode.Query(it) }
-        "query.jwt" -> redirectUri()?.let { ResponseMode.QueryJwt(it) }
-        null, "fragment" -> redirectUri()?.let { ResponseMode.Fragment(it) }
-        "fragment.jwt" -> redirectUri()?.let { ResponseMode.FragmentJwt(it) }
+        "direct_post" ->
+            if (redirectUri != null) null
+            else responseUri()?.let { ResponseMode.DirectPost(it) }
+
+        "direct_post.jwt" ->
+            if (redirectUri != null) null
+            else responseUri()?.let { ResponseMode.DirectPostJwt(it) }
+
+        "query" ->
+            if (responseUri != null) null
+            else redirectUri()?.let { ResponseMode.Query(it) }
+
+        "query.jwt" ->
+            if (responseUri != null) null
+            else redirectUri()?.let { ResponseMode.QueryJwt(it) }
+
+        null, "fragment" ->
+            if (responseUri != null) null
+            else redirectUri()?.let { ResponseMode.Fragment(it) }
+
+        "fragment.jwt" ->
+            if (responseUri != null) null
+            else redirectUri()?.let { ResponseMode.FragmentJwt(it) }
+
         else -> null
     }
 }
