@@ -1446,8 +1446,33 @@ class UnvalidatedRequestResolverTest {
             }
         }
 
+        // LOCAL CHANGE — these two replace upstream's single
+        // `if transaction_data format is not supported, resolution fails`, which asserted
+        // "Unsupported Transaction Data Format 'mso_mdoc'" for both cases below. The type is now
+        // examined before the format, because §5.1 makes the unrecognised type the thing that must
+        // be rejected, and a request with a good type deserves a different answer from one with
+        // nonsense in it. See RequestObjectValidator.ensureSupported.
+
         @Test
-        fun `if transaction_data format is not supported, resolution fails`() = runTest {
+        fun `if the transaction_data type is not recognised, resolution fails naming the type`() = runTest {
+            val transactionData = TransactionData.sdJwtVc(
+                TransactionDataType("no-such-transaction-data"),
+                listOf(QueryId("my_credential_2")),
+            )
+            testAndThen(transactionData.json, queryWithMultipleCredentials) {
+                val error = it.assertIsInvalid<ResolutionError.InvalidTransactionData>()
+                val cause = assertIs<IllegalArgumentException>(error.cause)
+                assertEquals(
+                    "Unsupported Transaction Data 'type': 'no-such-transaction-data'",
+                    cause.message,
+                )
+            }
+        }
+
+        @Test
+        fun `if a recognised transaction_data type is not supported for the format, resolution says so`() = runTest {
+            // 'basic-transaction-data' is configured as an SD-JWT VC type, and my_credential_2 is an
+            // mdoc — so the type is known but cannot be honoured for this Credential Format.
             val transactionData = TransactionData.sdJwtVc(
                 TransactionDataType("basic-transaction-data"),
                 listOf(QueryId("my_credential_2")),
@@ -1456,7 +1481,7 @@ class UnvalidatedRequestResolverTest {
                 val error = it.assertIsInvalid<ResolutionError.InvalidTransactionData>()
                 val cause = assertIs<IllegalArgumentException>(error.cause)
                 assertEquals(
-                    "Unsupported Transaction Data Format 'mso_mdoc'",
+                    "Transaction Data type 'basic-transaction-data' is not supported for format 'mso_mdoc'",
                     cause.message,
                 )
             }

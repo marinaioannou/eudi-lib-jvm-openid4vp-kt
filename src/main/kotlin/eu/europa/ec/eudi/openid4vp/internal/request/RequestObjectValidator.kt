@@ -387,17 +387,49 @@ private fun ResponseMode.uri(): URI = when (this) {
     -> error("No uri for response mode $this")
 }
 
-private fun TransactionData.ensureSupported(supportedTransactionDataTypes: List<SupportedTransactionDataType>) =
-    when (this) {
-        is TransactionData.SdJwtVc -> ensureSupported(supportedTransactionDataTypes)
+// CONFORMANCE test 13 — the test is about an unrecognised `type`, so the type is what the error
+// must name. Previously any mdoc transaction data failed on the format before the type was read.
+/**
+ * Two questions, asked in this order:
+ *
+ *  1. Does the Wallet recognise this `type` at all? §5.1 requires an error when a request carries
+ *     even one unrecognised transaction data type, and that is a defect of the *request*, so it is
+ *     reported first and named as such.
+ *  2. Can the Wallet honour a type it recognises for this Credential Format? That is a limit of the
+ *     *Wallet*, and its message says so rather than blaming the request.
+ *
+ * The previous order reversed these: any transaction data referring to an mdoc Credential failed on
+ * the format before the type was ever examined, so a request with a perfectly good type and one with
+ * nonsense both came back as "Unsupported Transaction Data Format 'mso_mdoc'". That told the Verifier
+ * about our gap instead of about its request, and it is not what §5.1 asks to be checked.
+ *
+ * Note that step 2 is unreachable while wallet-core keeps `supportedTransactionDataTypes` at its
+ * empty default and exposes no way to set it — every type is then unrecognised and step 1 catches
+ * everything. It becomes live as soon as that pass-through exists.
+ */
+private fun TransactionData.ensureSupported(supportedTransactionDataTypes: List<SupportedTransactionDataType>) {
+    val recognised = supportedTransactionDataTypes.firstOrNull { it.type == type }
+    require(null != recognised) {
+        "Unsupported Transaction Data '${OpenId4VPSpec.TRANSACTION_DATA_TYPE}': '$type'"
     }
 
-private fun TransactionData.SdJwtVc.ensureSupported(supportedTransactionDataTypes: List<SupportedTransactionDataType>) {
-    val type = this.type
+    when (this) {
+        is TransactionData.SdJwtVc -> ensureSupported(recognised)
+        is TransactionData.MsoMdoc -> ensureSupported(recognised)
+    }
+}
 
-    val supportedType = supportedTransactionDataTypes.firstOrNull { it.type == type }
+private fun TransactionData.MsoMdoc.ensureSupported(recognised: SupportedTransactionDataType) {
+    require(recognised is SupportedTransactionDataType.MsoMdoc) {
+        "Transaction Data type '$type' is not supported for format '${Format.MsoMdoc}'"
+    }
+    // No hash algorithms to reconcile for mdoc — see TransactionData.MsoMdoc.
+}
+
+private fun TransactionData.SdJwtVc.ensureSupported(recognised: SupportedTransactionDataType) {
+    val supportedType = recognised
     require(supportedType is SupportedTransactionDataType.SdJwtVc) {
-        "Unsupported Transaction Data '${OpenId4VPSpec.TRANSACTION_DATA_TYPE}': '$type'"
+        "Transaction Data type '$type' is not supported for format '${Format.SdJwtVc}'"
     }
 
     val hashAlgorithms = this.hashAlgorithmsOrDefault

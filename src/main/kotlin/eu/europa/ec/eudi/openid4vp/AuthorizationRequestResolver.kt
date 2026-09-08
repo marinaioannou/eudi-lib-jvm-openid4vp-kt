@@ -137,6 +137,7 @@ sealed interface TransactionData : java.io.Serializable {
             val format = credentialFormats.first()
             when (format) {
                 Format.SdJwtVc -> SdJwtVc(value)
+                Format.MsoMdoc -> MsoMdoc(value)
                 else -> throw IllegalArgumentException("Unsupported Transaction Data Format '$format'")
             }
         }
@@ -147,6 +148,36 @@ sealed interface TransactionData : java.io.Serializable {
             hashAlgorithms: List<HashAlgorithm>? = null,
             builder: JsonObjectBuilder.() -> Unit = {},
         ): SdJwtVc = SdJwtVc(type, credentialIds, hashAlgorithms, builder)
+    }
+
+    // CONFORMANCE test 13 `negative-test-unknown-transaction-data-type` — "the wallet MUST return an
+    // error if a request contains a transaction_data entry with an unrecognized type". Parsing mdoc
+    // transaction data is what lets that check run at all; before this it failed on the format first.
+    /**
+     * Represents ISO mdoc Transaction Data.
+     *
+     * Carries no hash algorithms: `transaction_data_hashes_alg` is an SD-JWT VC mechanism, where the
+     * Wallet returns digests of the transaction data in the KB-JWT. An mdoc instead protects
+     * transaction data through `DeviceSigned` and the credential's `KeyAuthorizations`, as described
+     * in OpenID4VP §8.4 and Appendix B, so there is nothing to negotiate here.
+     *
+     * Modeling this does not by itself make the Wallet able to *fulfil* mdoc transaction data — that
+     * needs the authorized data elements in the credential and the DeviceSigned plumbing. What it
+     * does is let the request be parsed so that the type check runs, which is what §5.1 actually
+     * asks about: an unrecognised `type` must be rejected as such. Before this, any mdoc transaction
+     * data failed earlier with "Unsupported Transaction Data Format 'mso_mdoc'", which described the
+     * Wallet's own gap rather than the request's defect and told the Verifier the wrong thing.
+     */
+    data class MsoMdoc internal constructor(override val value: Base64UrlSafe) : TransactionData {
+        override val json: JsonObject by lazy { decode(value) }
+        override val type: TransactionDataType get() = json.type()
+        override val credentialIds: List<QueryId> get() = json.credentialIds()
+
+        init {
+            require(credentialIds.isNotEmpty()) {
+                "Transaction Data '${OpenId4VPSpec.TRANSACTION_DATA_CREDENTIAL_IDS}' must not be empty'"
+            }
+        }
     }
 
     /**

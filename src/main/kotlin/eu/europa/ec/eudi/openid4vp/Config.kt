@@ -171,6 +171,15 @@ sealed interface SupportedTransactionDataType {
         }
     }
 
+    // CONFORMANCE test 13 — lets the wallet declare mdoc types, so the type check has something to
+    // check against. Unreachable until wallet-core exposes supportedTransactionDataTypes.
+    /**
+     * An mdoc Transaction Data type the Wallet supports. No hash algorithms: see
+     * [TransactionData.MsoMdoc].
+     */
+    data class MsoMdoc(
+        override val type: TransactionDataType,
+    ) : SupportedTransactionDataType
 }
 
 /**
@@ -189,6 +198,11 @@ data class VPConfiguration(
         if (null == vpFormatsSupported.sdJwtVc) {
             require(supportedTransactionDataTypes.none { it is SupportedTransactionDataType.SdJwtVc }) {
                 "SD-JWT VC Transaction Data cannot be used when SD-JWT VC is not supported"
+            }
+        }
+        if (null == vpFormatsSupported.msoMdoc) {
+            require(supportedTransactionDataTypes.none { it is SupportedTransactionDataType.MsoMdoc }) {
+                "mdoc Transaction Data cannot be used when mdoc is not supported"
             }
         }
     }
