@@ -169,6 +169,16 @@ sealed interface SupportedTransactionDataType {
             require(HashAlgorithm.SHA_256 in hashAlgorithms) { "'${HashAlgorithm.SHA_256.name}' must be a supported hash algorithm" }
         }
     }
+
+    /**
+     * A Transaction Data type the Wallet supports for ISO/IEC 18013-5 mdoc Credentials.
+     *
+     * It carries no hash algorithms: Appendix B.2.1 of OpenID4VP defines no profile that hashes
+     * the Transaction Data for mdoc, so there is nothing to negotiate.
+     */
+    data class MsoMdoc(
+        override val type: TransactionDataType,
+    ) : SupportedTransactionDataType
 }
 
 /**
@@ -188,6 +198,12 @@ data class VPConfiguration(
         if (null == vpFormatsSupported.sdJwtVc) {
             require(supportedTransactionDataTypes.none { it is SupportedTransactionDataType.SdJwtVc }) {
                 "SD-JWT VC Transaction Data cannot be used when SD-JWT VC is not supported"
+            }
+        }
+
+        if (null == vpFormatsSupported.msoMdoc) {
+            require(supportedTransactionDataTypes.none { it is SupportedTransactionDataType.MsoMdoc }) {
+                "MsoMdoc Transaction Data cannot be used when MsoMdoc is not supported"
             }
         }
     }
@@ -499,6 +515,12 @@ data class OpenId4VPConfig(
         if (null == vpFormatsSupported.sdJwtVc) {
             require(supportedTransactionDataTypes.none { it is SupportedTransactionDataType.SdJwtVc }) {
                 "SD-JWT VC Transaction Data cannot be used when SD-JWT VC is not supported"
+            }
+        }
+
+        if (null == vpFormatsSupported.msoMdoc) {
+            require(supportedTransactionDataTypes.none { it is SupportedTransactionDataType.MsoMdoc }) {
+                "MsoMdoc Transaction Data cannot be used when MsoMdoc is not supported"
             }
         }
     }

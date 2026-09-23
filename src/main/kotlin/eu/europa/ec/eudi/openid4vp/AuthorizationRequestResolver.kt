@@ -137,6 +137,7 @@ sealed interface TransactionData : java.io.Serializable {
             val format = credentialFormats.first()
             when (format) {
                 Format.SdJwtVc -> SdJwtVc(value)
+                Format.MsoMdoc -> MsoMdoc(value)
                 else -> throw IllegalArgumentException("Unsupported Transaction Data Format '$format'")
             }
         }
@@ -147,6 +148,25 @@ sealed interface TransactionData : java.io.Serializable {
             hashAlgorithms: List<HashAlgorithm>? = null,
             builder: JsonObjectBuilder.() -> Unit = {},
         ): SdJwtVc = SdJwtVc(type, credentialIds, hashAlgorithms, builder)
+    }
+
+    /**
+     * Represents resolved (i.e., supported by the Wallet) ISO/IEC 18013-5 mdoc Transaction Data.
+     *
+     * Unlike [SdJwtVc], this carries no hash algorithms: Appendix B.2.1 of OpenID4VP defines no
+     * profile that hashes the Transaction Data for mdoc. Each Transaction Data type defines the
+     * data element it returns and the rules that produce it.
+     */
+    data class MsoMdoc internal constructor(override val value: Base64UrlSafe) : TransactionData {
+        override val json: JsonObject by lazy { decode(value) }
+        override val type: TransactionDataType get() = json.type()
+        override val credentialIds: List<QueryId> get() = json.credentialIds()
+
+        init {
+            require(credentialIds.isNotEmpty()) {
+                "Transaction Data '${OpenId4VPSpec.TRANSACTION_DATA_CREDENTIAL_IDS}' must not be empty'"
+            }
+        }
     }
 
     /**

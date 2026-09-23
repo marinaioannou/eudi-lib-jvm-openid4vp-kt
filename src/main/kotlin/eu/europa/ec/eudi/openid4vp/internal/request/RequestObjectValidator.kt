@@ -390,13 +390,28 @@ private fun ResponseMode.uri(): URI = when (this) {
 private fun TransactionData.ensureSupported(supportedTransactionDataTypes: List<SupportedTransactionDataType>) =
     when (this) {
         is TransactionData.SdJwtVc -> ensureSupported(supportedTransactionDataTypes)
+        is TransactionData.MsoMdoc -> ensureSupported(supportedTransactionDataTypes)
     }
+
+private fun TransactionData.MsoMdoc.ensureSupported(supportedTransactionDataTypes: List<SupportedTransactionDataType>) {
+    val type = this.type
+
+    require(
+        supportedTransactionDataTypes
+            .filterIsInstance<SupportedTransactionDataType.MsoMdoc>()
+            .any { it.type == type },
+    ) {
+        "Unsupported Transaction Data '${OpenId4VPSpec.TRANSACTION_DATA_TYPE}': '$type'"
+    }
+}
 
 private fun TransactionData.SdJwtVc.ensureSupported(supportedTransactionDataTypes: List<SupportedTransactionDataType>) {
     val type = this.type
 
-    val supportedType = supportedTransactionDataTypes.firstOrNull { it.type == type }
-    require(supportedType is SupportedTransactionDataType.SdJwtVc) {
+    val supportedType = supportedTransactionDataTypes
+        .filterIsInstance<SupportedTransactionDataType.SdJwtVc>()
+        .firstOrNull { it.type == type }
+    requireNotNull(supportedType) {
         "Unsupported Transaction Data '${OpenId4VPSpec.TRANSACTION_DATA_TYPE}': '$type'"
     }
 

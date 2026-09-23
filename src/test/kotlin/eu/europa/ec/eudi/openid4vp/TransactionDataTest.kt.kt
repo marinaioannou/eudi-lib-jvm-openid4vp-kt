@@ -60,7 +60,8 @@ class TransactionDataTest {
         httpClient.close()
     }
 
-    private fun resolver() = DefaultRequestResolverOverHttp(walletConfig, httpClient)
+    private fun resolver(config: OpenId4VPConfig = walletConfig) =
+        DefaultRequestResolverOverHttp(config, httpClient)
 
     private val queryWithSingleCredential = readFileAsText("dcql/basic_example.json")
     private val queryWithMultipleCredentials = readFileAsText("dcql/complex_example.json")
@@ -131,6 +132,7 @@ class TransactionDataTest {
     private suspend fun testAndThen(
         transactionData: JsonArray,
         query: String,
+        config: OpenId4VPConfig = walletConfig,
         block: suspend (Resolution) -> Unit,
     ) {
         val clientId = "x509_hash:0Wuix-gyx7KGtmfxusspetyYsnjThtGOpI15s5QVPZQ"
@@ -150,13 +152,14 @@ class TransactionDataTest {
             .signWithKeystore()
 
         val authRequest = "http://localhost:8080/public_url?client_id=$clientIdEncoded&request=$signedJwt"
-        val resolution = resolver().resolveRequestUri(authRequest)
+        val resolution = resolver(config).resolveRequestUri(authRequest)
         block(resolution)
     }
 
     private suspend fun testAndThen(
         transactionData: JsonObject,
         query: String,
+        config: OpenId4VPConfig = walletConfig,
         assertions: suspend (Resolution) -> Unit,
     ) {
         testAndThen(
@@ -166,6 +169,7 @@ class TransactionDataTest {
                 ),
             ),
             query,
+            config,
             assertions,
         )
     }
@@ -469,7 +473,7 @@ class TransactionDataTest {
     }
 
     @Test
-    fun `if transaction_data format is not supported, resolution fails`() = runTest {
+    fun `if the type is not supported for the Credential's format, resolution fails`() = runTest {
         val transactionData = TransactionData.sdJwtVc(
             TransactionDataType("basic-transaction-data"),
             listOf(QueryId("my_credential_2")),
@@ -478,9 +482,28 @@ class TransactionDataTest {
             val error = it.assertIsInvalid<ResolutionError.InvalidTransactionData>()
             val cause = assertIs<IllegalArgumentException>(error.cause)
             assertEquals(
-                "Unsupported Transaction Data Format 'mso_mdoc'",
+                "Unsupported Transaction Data 'type': 'basic-transaction-data'",
                 cause.message,
             )
+        }
+    }
+
+    @Test
+    fun `transaction_data of an mso_mdoc Credential resolves when the type is supported`() = runTest {
+        val transactionData = TransactionData.sdJwtVc(
+            TransactionDataType("basic-transaction-data"),
+            listOf(QueryId("my_credential_2")),
+        )
+        val config = walletConfig.copy(
+            supportedTransactionDataTypes = listOf(
+                SupportedTransactionDataType.MsoMdoc(TransactionDataType("basic-transaction-data")),
+            ),
+        )
+        testAndThen(transactionData.json, queryWithMultipleCredentials, config) {
+            val success = assertIs<Resolution.Success>(it)
+            val resolved = assertNotNull(success.requestObject.transactionData).single()
+            assertIs<TransactionData.MsoMdoc>(resolved)
+            assertEquals(TransactionDataType("basic-transaction-data"), resolved.type)
         }
     }
 }
